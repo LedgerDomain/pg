@@ -2,6 +2,7 @@ package pg
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -213,6 +214,7 @@ func (db *baseDB) exec(c context.Context, query interface{}, params ...interface
 	var res Result
 	var lastErr error
 	for attempt := 0; attempt <= db.opt.MaxRetries; attempt++ {
+		fmt.Printf("CALLING DB EXEC; attempt %d of %d", attempt, db.opt.MaxRetries)
 		if attempt > 0 {
 			lastErr = internal.Sleep(c, db.retryBackoff(attempt-1))
 			if lastErr != nil {
@@ -222,9 +224,13 @@ func (db *baseDB) exec(c context.Context, query interface{}, params ...interface
 
 		lastErr = db.withConn(c, func(c context.Context, cn *pool.Conn) error {
 			res, err = db.simpleQuery(c, cn, query, params...)
+            if err != nil {
+                fmt.Printf("GOT ERROR: %s", err)
+            }
 			return err
 		})
 		if !db.shouldRetry(lastErr) {
+            fmt.Printf("SHOULD RETRY FALSE, break")
 			break
 		}
 	}
