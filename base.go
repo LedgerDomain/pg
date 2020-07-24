@@ -214,7 +214,7 @@ func (db *baseDB) exec(c context.Context, query interface{}, params ...interface
 	var res Result
 	var lastErr error
 	for attempt := 0; attempt <= db.opt.MaxRetries; attempt++ {
-		fmt.Printf("CALLING DB EXEC; attempt %d of %d", attempt, db.opt.MaxRetries)
+		fmt.Printf("CALLING DB EXEC; attempt %d of %d\n", attempt, db.opt.MaxRetries)
 		if attempt > 0 {
 			lastErr = internal.Sleep(c, db.retryBackoff(attempt-1))
 			if lastErr != nil {
@@ -225,19 +225,21 @@ func (db *baseDB) exec(c context.Context, query interface{}, params ...interface
 		lastErr = db.withConn(c, func(c context.Context, cn *pool.Conn) error {
 			res, err = db.simpleQuery(c, cn, query, params...)
             if err != nil {
-                fmt.Printf("GOT ERROR: %s", err)
+                fmt.Printf("GOT ERROR: %s\n", err)
             }
 			return err
 		})
 		if !db.shouldRetry(lastErr) {
-            fmt.Printf("SHOULD RETRY FALSE, break")
+            fmt.Printf("SHOULD RETRY FALSE (lastErr=%v), break\n", lastErr)
 			break
 		}
 	}
 
 	if err := db.afterQuery(c, evt, res, lastErr); err != nil {
+        fmt.Printf("db.afterQuery RETURNING ERROR %v\n", err)
 		return nil, err
 	}
+    fmt.Printf("RETURING res=%v, lastErr=%v\n", res, lastErr)
 	return res, lastErr
 }
 
