@@ -231,7 +231,7 @@ func (db *baseDB) exec(c context.Context, query interface{}, params ...interface
 		})
 		if !db.shouldRetry(lastErr) {
             fmt.Printf("SHOULD RETRY FALSE (lastErr=%v; type=%T), isNetwork?=%v break\n", lastErr, lastErr, isNetworkError(lastErr))
-			break
+			//break
 		}
 	}
 
