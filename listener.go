@@ -40,7 +40,7 @@ type Listener struct {
 	closed bool
 
 	chOnce sync.Once
-	ch     chan *Notification
+	ch     chan Notification
 	pingCh chan struct{}
 }
 
@@ -69,7 +69,7 @@ func (ln *Listener) connWithLock(ctx context.Context) (*pool.Conn, error) {
 		_ = ln.Close()
 		return nil, errListenerClosed
 	default:
-		internal.Logger.Printf("pg: Listen failed: %s", err)
+		internal.Logger.Printf(ctx, "pg: Listen failed: %s", err)
 		return nil, err
 	}
 }
@@ -88,11 +88,12 @@ func (ln *Listener) conn(ctx context.Context) (*pool.Conn, error) {
 		return nil, err
 	}
 
-	err = ln.db.initConn(ctx, cn)
-	if err != nil {
+	if err := ln.db.initConn(ctx, cn); err != nil {
 		_ = ln.db.pool.CloseConn(cn)
 		return nil, err
 	}
+
+	cn.LockReader()
 
 	if len(ln.channels) > 0 {
 		err := ln.listen(ctx, cn, ln.channels...)
@@ -126,7 +127,7 @@ func (ln *Listener) closeTheCn(reason error) error {
 		return nil
 	}
 	if !ln.closed {
-		internal.Logger.Printf("pg: discarding bad listener connection: %s", reason)
+		internal.Logger.Printf(ln.db.ctx, "pg: discarding bad listener connection: %s", reason)
 	}
 
 	err := ln.db.pool.CloseConn(ln.cn)
@@ -227,7 +228,7 @@ func (ln *Listener) ReceiveTimeout(
 		return "", "", err
 	}
 
-	err = cn.WithReader(ctx, timeout, func(rd *pool.BufReader) error {
+	err = cn.WithReader(ctx, timeout, func(rd *pool.ReaderContext) error {
 		channel, payload, err = readNotification(rd)
 		return err
 	})
@@ -244,17 +245,17 @@ func (ln *Listener) ReceiveTimeout(
 //
 // The channel is closed with Listener. Receive* APIs can not be used
 // after channel is created.
-func (ln *Listener) Channel() <-chan *Notification {
+func (ln *Listener) Channel() <-chan Notification {
 	return ln.channel(100)
 }
 
 // ChannelSize is like Channel, but creates a Go channel
 // with specified buffer size.
-func (ln *Listener) ChannelSize(size int) <-chan *Notification {
+func (ln *Listener) ChannelSize(size int) <-chan Notification {
 	return ln.channel(size)
 }
 
-func (ln *Listener) channel(size int) <-chan *Notification {
+func (ln *Listener) channel(size int) <-chan Notification {
 	ln.chOnce.Do(func() {
 		ln.initChannel(size)
 	})
@@ -266,16 +267,17 @@ func (ln *Listener) channel(size int) <-chan *Notification {
 }
 
 func (ln *Listener) initChannel(size int) {
-	const timeout = 30 * time.Second
+	const pingTimeout = time.Second
+	const chanSendTimeout = time.Minute
 
 	ctx := ln.db.ctx
 	_ = ln.Listen(ctx, gopgChannel)
 
-	ln.ch = make(chan *Notification, size)
+	ln.ch = make(chan Notification, size)
 	ln.pingCh = make(chan struct{}, 1)
 
 	go func() {
-		timer := time.NewTimer(timeout)
+		timer := time.NewTimer(time.Minute)
 		timer.Stop()
 
 		var errCount int
@@ -286,10 +288,12 @@ func (ln *Listener) initChannel(size int) {
 					close(ln.ch)
 					return
 				}
+
 				if errCount > 0 {
-					time.Sleep(ln.db.retryBackoff(errCount))
+					time.Sleep(500 * time.Millisecond)
 				}
 				errCount++
+
 				continue
 			}
 
@@ -305,28 +309,31 @@ func (ln *Listener) initChannel(size int) {
 			case gopgChannel:
 				// ignore
 			default:
-				timer.Reset(timeout)
+				timer.Reset(chanSendTimeout)
 				select {
-				case ln.ch <- &Notification{channel, payload}:
+				case ln.ch <- Notification{channel, payload}:
 					if !timer.Stop() {
 						<-timer.C
 					}
 				case <-timer.C:
 					internal.Logger.Printf(
+						ctx,
 						"pg: %s channel is full for %s (notification is dropped)",
-						ln, timeout)
+						ln,
+						chanSendTimeout,
+					)
 				}
 			}
 		}
 	}()
 
 	go func() {
-		timer := time.NewTimer(timeout)
+		timer := time.NewTimer(time.Minute)
 		timer.Stop()
 
 		healthy := true
 		for {
-			timer.Reset(timeout)
+			timer.Reset(pingTimeout)
 			select {
 			case <-ln.pingCh:
 				healthy = true

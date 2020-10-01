@@ -7,6 +7,7 @@ import (
 	"github.com/go-pg/pg/v10/internal"
 	"github.com/go-pg/pg/v10/internal/pool"
 	"github.com/go-pg/pg/v10/orm"
+	"github.com/go-pg/pg/v10/types"
 )
 
 var errStmtClosed = errors.New("pg: statement is closed")
@@ -19,7 +20,7 @@ type Stmt struct {
 
 	q       string
 	name    string
-	columns [][]byte
+	columns []types.ColumnInfo
 }
 
 func prepareStmt(db *baseDB, q string) (*Stmt, error) {
@@ -37,23 +38,23 @@ func prepareStmt(db *baseDB, q string) (*Stmt, error) {
 	return stmt, nil
 }
 
-func (stmt *Stmt) prepare(c context.Context, q string) error {
+func (stmt *Stmt) prepare(ctx context.Context, q string) error {
 	var lastErr error
 	for attempt := 0; attempt <= stmt.db.opt.MaxRetries; attempt++ {
 		if attempt > 0 {
-			if err := internal.Sleep(c, stmt.db.retryBackoff(attempt-1)); err != nil {
+			if err := internal.Sleep(ctx, stmt.db.retryBackoff(attempt-1)); err != nil {
 				return err
 			}
 
-			err := stmt.db.pool.(*pool.SingleConnPool).Reset()
+			err := stmt.db.pool.(*pool.StickyConnPool).Reset(ctx)
 			if err != nil {
 				return err
 			}
 		}
 
-		lastErr = stmt.withConn(c, func(c context.Context, cn *pool.Conn) error {
+		lastErr = stmt.withConn(ctx, func(ctx context.Context, cn *pool.Conn) error {
 			var err error
-			stmt.name, stmt.columns, err = stmt.db.prepare(c, cn, q)
+			stmt.name, stmt.columns, err = stmt.db.prepare(ctx, cn, q)
 			return err
 		})
 		if !stmt.db.shouldRetry(lastErr) {
@@ -236,7 +237,7 @@ func (stmt *Stmt) extQuery(
 	}
 
 	var res Result
-	err = cn.WithReader(c, stmt.db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	err = cn.WithReader(c, stmt.db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		res, err = readExtQuery(rd)
 		return err
 	})
@@ -252,7 +253,7 @@ func (stmt *Stmt) extQueryData(
 	cn *pool.Conn,
 	name string,
 	model interface{},
-	columns [][]byte,
+	columns []types.ColumnInfo,
 	params ...interface{},
 ) (Result, error) {
 	err := cn.WithWriter(c, stmt.db.opt.WriteTimeout, func(wb *pool.WriteBuffer) error {
@@ -263,7 +264,7 @@ func (stmt *Stmt) extQueryData(
 	}
 
 	var res *result
-	err = cn.WithReader(c, stmt.db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	err = cn.WithReader(c, stmt.db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		res, err = readExtQueryData(c, rd, model, columns)
 		return err
 	})

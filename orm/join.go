@@ -64,16 +64,16 @@ func (j *join) manyQuery(q *Query) (*Query, error) {
 
 	baseTable := j.BaseModel.Table()
 	var where []byte
-	if len(j.Rel.FKs) > 1 {
+	if len(j.Rel.JoinFKs) > 1 {
 		where = append(where, '(')
 	}
-	where = appendColumns(where, j.JoinModel.Table().Alias, j.Rel.FKs)
-	if len(j.Rel.FKs) > 1 {
+	where = appendColumns(where, j.JoinModel.Table().Alias, j.Rel.JoinFKs)
+	if len(j.Rel.JoinFKs) > 1 {
 		where = append(where, ')')
 	}
 	where = append(where, " IN ("...)
 	where = appendChildValues(
-		where, j.JoinModel.Root(), j.JoinModel.ParentIndex(), j.Rel.FKValues)
+		where, j.JoinModel.Root(), j.JoinModel.ParentIndex(), j.Rel.BaseFKs)
 	where = append(where, ")"...)
 	q = q.Where(internal.BytesToString(where))
 
@@ -126,7 +126,7 @@ func (j *join) m2mQuery(fmter QueryFormatter, q *Query) (*Query, error) {
 	join = append(join, " AS "...)
 	join = append(join, j.Rel.M2MTableAlias...)
 	join = append(join, " ON ("...)
-	for i, col := range j.Rel.BaseFKs {
+	for i, col := range j.Rel.M2MBaseFKs {
 		if i > 0 {
 			join = append(join, ", "...)
 		}
@@ -140,10 +140,7 @@ func (j *join) m2mQuery(fmter QueryFormatter, q *Query) (*Query, error) {
 	q = q.Join(internal.BytesToString(join))
 
 	joinTable := j.JoinModel.Table()
-	for i, col := range j.Rel.JoinFKs {
-		if i >= len(joinTable.PKs) {
-			break
-		}
+	for i, col := range j.Rel.M2MJoinFKs {
 		pk := joinTable.PKs[i]
 		q = q.Where("?.? = ?.?",
 			joinTable.Alias, pk.Column,
@@ -242,7 +239,7 @@ func (j *join) appendHasOneJoin(fmter QueryFormatter, b []byte, q *Query) (_ []b
 	isSoftDelete := j.JoinModel.Table().SoftDeleteField != nil && !q.hasFlag(allWithDeletedFlag)
 
 	b = append(b, "LEFT JOIN "...)
-	b = fmter.FormatQuery(b, string(j.JoinModel.Table().FullNameForSelects))
+	b = fmter.FormatQuery(b, string(j.JoinModel.Table().SQLNameForSelects))
 	b = append(b, " AS "...)
 	b = j.appendAlias(b)
 
@@ -252,38 +249,22 @@ func (j *join) appendHasOneJoin(fmter QueryFormatter, b []byte, q *Query) (_ []b
 		b = append(b, '(')
 	}
 
-	if len(j.Rel.FKs) > 1 {
+	if len(j.Rel.BaseFKs) > 1 {
 		b = append(b, '(')
 	}
-	if j.Rel.Type == HasOneRelation {
-		for i, fk := range j.Rel.FKs {
-			if i > 0 {
-				b = append(b, " AND "...)
-			}
-			b = j.appendAlias(b)
-			b = append(b, '.')
-			b = append(b, j.Rel.JoinTable.PKs[i].Column...)
-			b = append(b, " = "...)
-			b = j.appendBaseAlias(b)
-			b = append(b, '.')
-			b = append(b, fk.Column...)
+	for i, baseFK := range j.Rel.BaseFKs {
+		if i > 0 {
+			b = append(b, " AND "...)
 		}
-	} else {
-		baseTable := j.BaseModel.Table()
-		for i, fk := range j.Rel.FKs {
-			if i > 0 {
-				b = append(b, " AND "...)
-			}
-			b = j.appendAlias(b)
-			b = append(b, '.')
-			b = append(b, fk.Column...)
-			b = append(b, " = "...)
-			b = j.appendBaseAlias(b)
-			b = append(b, '.')
-			b = append(b, baseTable.PKs[i].Column...)
-		}
+		b = j.appendAlias(b)
+		b = append(b, '.')
+		b = append(b, j.Rel.JoinFKs[i].Column...)
+		b = append(b, " = "...)
+		b = j.appendBaseAlias(b)
+		b = append(b, '.')
+		b = append(b, baseFK.Column...)
 	}
-	if len(j.Rel.FKs) > 1 {
+	if len(j.Rel.BaseFKs) > 1 {
 		b = append(b, ')')
 	}
 

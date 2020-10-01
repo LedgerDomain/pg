@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-pg/pg/v10"
 	"github.com/go-pg/pg/v10/orm"
-	"github.com/go-pg/pg/v10/types"
 )
 
 func modelDB() *pg.DB {
@@ -56,8 +55,8 @@ func modelDB() *pg.DB {
 		}
 
 		_, err = db.Model(&BookGenre{
-			BookId:  1,
-			GenreId: genre.Id,
+			BookID:  1,
+			GenreID: genre.ID,
 		}).Insert()
 		if err != nil {
 			panic(err)
@@ -73,7 +72,7 @@ func modelDB() *pg.DB {
 	return db
 }
 
-func ExampleDB_Insert() {
+func ExampleDB_Model_insert() {
 	db := modelDB()
 
 	book := &Book{
@@ -94,7 +93,7 @@ func ExampleDB_Insert() {
 	}
 }
 
-func ExampleDB_Insert_bulkInsert() {
+func ExampleDB_Model_bulkInsert() {
 	db := modelDB()
 
 	book1 := &Book{
@@ -118,7 +117,7 @@ func ExampleDB_Insert_bulkInsert() {
 	}
 }
 
-func ExampleDB_Insert_bulkInsertSlice() {
+func ExampleDB_Model_bulkInsertSlice() {
 	db := modelDB()
 
 	books := []Book{{
@@ -141,11 +140,11 @@ func ExampleDB_Insert_bulkInsertSlice() {
 	}
 }
 
-func ExampleDB_Insert_onConflictDoNothing() {
+func ExampleDB_Model_insertOnConflictDoNothing() {
 	db := modelDB()
 
 	book := &Book{
-		Id:    100,
+		ID:    100,
 		Title: "book 100",
 	}
 
@@ -170,13 +169,13 @@ func ExampleDB_Insert_onConflictDoNothing() {
 	// did nothing
 }
 
-func ExampleDB_Insert_onConflictDoUpdate() {
+func ExampleDB_Model_insertOnConflictDoUpdate() {
 	db := modelDB()
 
 	var book *Book
 	for i := 0; i < 2; i++ {
 		book = &Book{
-			Id:    100,
+			ID:    100,
 			Title: fmt.Sprintf("title version #%d", i),
 		}
 		_, err := db.Model(book).
@@ -203,7 +202,7 @@ func ExampleDB_Insert_onConflictDoUpdate() {
 	// Book<Id=100 Title="title version #1">
 }
 
-func ExampleDB_Insert_selectOrInsert() {
+func ExampleDB_Model_selectOrInsert() {
 	db := modelDB()
 
 	author := Author{
@@ -222,7 +221,7 @@ func ExampleDB_Insert_selectOrInsert() {
 	// Output: true Author<ID=2 Name="R. Scott Bakker">
 }
 
-func ExampleDB_Insert_dynamicTableName() {
+func ExampleDB_Model_insertDynamicTableName() {
 	type NamelessModel struct {
 		tableName struct{} `pg:"_"` // "_" means no name
 		Id        int
@@ -250,11 +249,11 @@ func ExampleDB_Insert_dynamicTableName() {
 	// Output: id is 123
 }
 
-func ExampleDB_Select() {
+func ExampleDB_Model_select() {
 	db := modelDB()
 
 	book := &Book{
-		Id: 1,
+		ID: 1,
 	}
 	err := db.Model(book).WherePK().Select()
 	if err != nil {
@@ -264,7 +263,7 @@ func ExampleDB_Select() {
 	// Output: Book<Id=1 Title="book 1">
 }
 
-func ExampleDB_Select_firstRow() {
+func ExampleDB_Model_selectFirstRow() {
 	db := modelDB()
 
 	var firstBook Book
@@ -276,7 +275,7 @@ func ExampleDB_Select_firstRow() {
 	// Output: Book<Id=1 Title="book 1">
 }
 
-func ExampleDB_Select_lastRow() {
+func ExampleDB_Model_selectLastRow() {
 	db := modelDB()
 
 	var lastBook Book
@@ -288,7 +287,7 @@ func ExampleDB_Select_lastRow() {
 	// Output: Book<Id=3 Title="book 3">
 }
 
-func ExampleDB_Select_allColumns() {
+func ExampleDB_Model_selectAllColumns() {
 	db := modelDB()
 
 	var book Book
@@ -300,7 +299,7 @@ func ExampleDB_Select_allColumns() {
 	// Output: Book<Id=1 Title="book 1"> 1
 }
 
-func ExampleDB_Select_someColumns() {
+func ExampleDB_Model_selectSomeColumns() {
 	db := modelDB()
 
 	var book Book
@@ -317,7 +316,7 @@ func ExampleDB_Select_someColumns() {
 	// Output: Book<Id=1 Title="book 1">
 }
 
-func ExampleDB_Select_someColumnsIntoVars() {
+func ExampleDB_Model_selectSomeColumnsIntoVars() {
 	db := modelDB()
 
 	var id int
@@ -335,7 +334,7 @@ func ExampleDB_Select_someColumnsIntoVars() {
 	// Output: 1 book 1
 }
 
-func ExampleDB_Select_whereIn() {
+func ExampleDB_Model_selectWhereIn() {
 	db := modelDB()
 
 	var books []Book
@@ -347,7 +346,7 @@ func ExampleDB_Select_whereIn() {
 	// Output: [Book<Id=1 Title="book 1"> Book<Id=2 Title="book 2">]
 }
 
-func ExampleDB_Select_whereGroup() {
+func ExampleDB_Model_selectWhereGroup() {
 	db := modelDB()
 
 	var books []Book
@@ -366,7 +365,7 @@ func ExampleDB_Select_whereGroup() {
 	// Output: [Book<Id=1 Title="book 1"> Book<Id=2 Title="book 2">]
 }
 
-func ExampleDB_Select_sqlExpression() {
+func ExampleDB_Model_selectSQLExpression() {
 	db := modelDB()
 
 	var ids []int
@@ -380,7 +379,7 @@ func ExampleDB_Select_sqlExpression() {
 	// Output: [1 2 3]
 }
 
-func ExampleDB_Select_groupBy() {
+func ExampleDB_Model_selectGroupBy() {
 	db := modelDB()
 
 	var res []struct {
@@ -405,7 +404,7 @@ func ExampleDB_Select_groupBy() {
 	// author 11 has 1 books
 }
 
-func ExampleDB_Select_with() {
+func ExampleDB_Model_selectWith() {
 	authorBooks := pgdb.Model(&Book{}).Where("author_id = ?", 1)
 
 	var books []Book
@@ -420,7 +419,7 @@ func ExampleDB_Select_with() {
 	// Output: [Book<Id=1 Title="book 1"> Book<Id=2 Title="book 2">]
 }
 
-func ExampleDB_Select_wrapWith() {
+func ExampleDB_Model_selectWrapWith() {
 	// WITH author_books AS (
 	//     SELECT * books WHERE author_id = 1
 	// )
@@ -438,7 +437,7 @@ func ExampleDB_Select_wrapWith() {
 	// Output: [Book<Id=1 Title="book 1"> Book<Id=2 Title="book 2">]
 }
 
-func ExampleDB_Select_applyFunc() {
+func ExampleDB_Model_selectApplyFunc() {
 	db := modelDB()
 
 	var authorId int
@@ -558,7 +557,7 @@ func ExampleDB_Model_hasOne() {
 		Id        int
 		Name      string
 		ProfileId int
-		Profile   *Profile
+		Profile   *Profile `pg:"rel:has-one"`
 	}
 
 	db := connect()
@@ -615,7 +614,7 @@ func ExampleDB_Model_belongsTo() {
 	type User struct {
 		Id      int
 		Name    string
-		Profile *Profile
+		Profile *Profile `pg:"rel:belongs-to"`
 	}
 
 	db := connect()
@@ -672,7 +671,7 @@ func ExampleDB_Model_hasMany() {
 	type User struct {
 		Id       int
 		Name     string
-		Profiles []*Profile
+		Profiles []*Profile `pg:"rel:has-many"`
 	}
 
 	db := connect()
@@ -715,7 +714,7 @@ func ExampleDB_Model_hasMany() {
 func ExampleDB_Model_hasManySelf() {
 	type Item struct {
 		Id       int
-		Items    []Item `pg:"fk:parent_id"`
+		Items    []Item `pg:"rel:has-many,join_fk:parent_id"`
 		ParentId int
 	}
 
@@ -750,10 +749,10 @@ func ExampleDB_Model_hasManySelf() {
 	// Subitems 2 3
 }
 
-func ExampleDB_Update() {
+func ExampleDB_Model_update() {
 	db := modelDB()
 
-	book := &Book{Id: 1}
+	book := &Book{ID: 1}
 	err := db.Model(book).WherePK().Select()
 	if err != nil {
 		panic(err)
@@ -774,11 +773,11 @@ func ExampleDB_Update() {
 	// Output: Book<Id=1 Title="updated book 1">
 }
 
-func ExampleDB_Update_notZero() {
+func ExampleDB_Model_updateNotZero() {
 	db := modelDB()
 
 	book := &Book{
-		Id:    1,
+		ID:    1,
 		Title: "updated book 1",
 	}
 	_, err := db.Model(book).WherePK().UpdateNotZero()
@@ -796,11 +795,55 @@ func ExampleDB_Update_notZero() {
 	// Output: Book<Id=1 Title="updated book 1">
 }
 
-func ExampleDB_Update_someColumns() {
+func ExampleDB_Model_updateUseZeroBool() {
+	type Event struct {
+		ID     int
+		Active bool `pg:",use_zero"`
+	}
+
+	db := pg.Connect(pgOptions())
+	defer db.Close()
+
+	err := db.Model((*Event)(nil)).CreateTable(&orm.CreateTableOptions{
+		Temp: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	event := &Event{
+		ID:     1,
+		Active: true,
+	}
+	_, err = db.Model(event).Insert()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(event)
+
+	event.Active = false
+	_, err = db.Model(event).WherePK().UpdateNotZero()
+	if err != nil {
+		panic(err)
+	}
+
+	event2 := new(Event)
+	err = db.Model(event2).Where("id = ?", 1).Select()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(event2)
+	// Output: &{1 true}
+	// &{1 false}
+}
+
+func ExampleDB_Model_updateSomeColumns() {
 	db := modelDB()
 
 	book := Book{
-		Id:       1,
+		ID:       1,
 		Title:    "updated book 1", // only this column is going to be updated
 		AuthorID: 2,
 	}
@@ -813,11 +856,11 @@ func ExampleDB_Update_someColumns() {
 	// Output: Book<Id=1 Title="updated book 1"> 1
 }
 
-func ExampleDB_Update_someColumns2() {
+func ExampleDB_Model_updateSomeColumns2() {
 	db := modelDB()
 
 	book := Book{
-		Id:       1,
+		ID:       1,
 		Title:    "updated book 1",
 		AuthorID: 2, // this column will not be updated
 	}
@@ -830,7 +873,7 @@ func ExampleDB_Update_someColumns2() {
 	// Output: Book<Id=1 Title="updated book 1"> 1
 }
 
-func ExampleDB_Update_setValues() {
+func ExampleDB_Model_updateSetValues() {
 	db := modelDB()
 
 	var book Book
@@ -847,16 +890,16 @@ func ExampleDB_Update_setValues() {
 	// Output: Book<Id=1 Title="prefix book 1 suffix">
 }
 
-func ExampleDB_Update_bulkUpdate() {
+func ExampleDB_Model_bulkUpdate() {
 	db := modelDB()
 
 	book1 := &Book{
-		Id:        1,
+		ID:        1,
 		Title:     "updated book 1",
 		UpdatedAt: time.Now(),
 	}
 	book2 := &Book{
-		Id:        2,
+		ID:        2,
 		Title:     "updated book 2",
 		UpdatedAt: time.Now(),
 	}
@@ -880,15 +923,15 @@ func ExampleDB_Update_bulkUpdate() {
 	// Output: [Book<Id=1 Title="updated book 1"> Book<Id=2 Title="updated book 2"> Book<Id=3 Title="book 3">]
 }
 
-func ExampleDB_Update_bulkUpdateSlice() {
+func ExampleDB_Model_bulkUpdateSlice() {
 	db := modelDB()
 
 	books := []Book{{
-		Id:        1,
+		ID:        1,
 		Title:     "updated book 1",
 		UpdatedAt: time.Now(),
 	}, {
-		Id:        2,
+		ID:        2,
 		Title:     "updated book 2",
 		UpdatedAt: time.Now(),
 	}}
@@ -912,7 +955,7 @@ func ExampleDB_Update_bulkUpdateSlice() {
 	// Output: [Book<Id=1 Title="updated book 1"> Book<Id=2 Title="updated book 2"> Book<Id=3 Title="book 3">]
 }
 
-func ExampleDB_Delete() {
+func ExampleDB_Model_delete() {
 	db := modelDB()
 
 	book := &Book{
@@ -934,7 +977,7 @@ func ExampleDB_Delete() {
 	// Output: pg: no rows in result set
 }
 
-func ExampleDB_Delete_multipleRows() {
+func ExampleDB_Model_deleteMultipleRows() {
 	db := modelDB()
 
 	ids := pg.In([]int{1, 2, 3})
@@ -954,7 +997,7 @@ func ExampleDB_Delete_multipleRows() {
 	// left 0
 }
 
-func ExampleDB_Delete_bulkDelete() {
+func ExampleDB_Model_bulkDelete() {
 	db := modelDB()
 
 	var books []Book
@@ -979,13 +1022,13 @@ func ExampleDB_Delete_bulkDelete() {
 	// left 0
 }
 
-func ExampleQ() {
+func ExampleSafe() {
 	db := modelDB()
 
 	cond := fmt.Sprintf("id = %d", 1)
 
 	var book Book
-	err := db.Model(&book).Where("?", types.Safe(cond)).Select()
+	err := db.Model(&book).Where("?", pg.Safe(cond)).Select()
 	if err != nil {
 		panic(err)
 	}
@@ -993,11 +1036,11 @@ func ExampleQ() {
 	// Output: Book<Id=1 Title="book 1">
 }
 
-func ExampleF() {
+func ExampleIdent() {
 	db := modelDB()
 
 	var book Book
-	err := db.Model(&book).Where("? = 1", types.Ident("id")).Select()
+	err := db.Model(&book).Where("? = 1", pg.Ident("id")).Select()
 	if err != nil {
 		panic(err)
 	}
@@ -1042,7 +1085,7 @@ func ExampleDB_jsonUseNumber() {
 	// Output: json.Number
 }
 
-func ExampleDB_discardUnknownColumns() {
+func ExampleDB_Model_discardUnknownColumns() {
 	type Model1 struct {
 	}
 
@@ -1058,6 +1101,52 @@ func ExampleDB_discardUnknownColumns() {
 	_, err = pgdb.QueryOne(&model2, "SELECT 1 AS id")
 	fmt.Printf("Model2: %v\n", err)
 
-	// Output: Model1: pg: can't find column=id in model=Model1 (try discard_unknown_columns)
+	// Output: Model1: pg: can't find column=id in model=Model1 (prefix the column with underscore or use discard_unknown_columns)
 	// Model2: <nil>
+}
+
+func ExampleDB_Model_softDelete() {
+	type Flight struct {
+		Id        int
+		Name      string
+		DeletedAt time.Time `pg:",soft_delete"`
+	}
+
+	err := pgdb.Model((*Flight)(nil)).CreateTable(&orm.CreateTableOptions{
+		Temp: true,
+	})
+	panicIf(err)
+
+	flight1 := &Flight{
+		Id: 1,
+	}
+	_, err = pgdb.Model(flight1).Insert()
+	panicIf(err)
+
+	// Soft delete.
+	_, err = pgdb.Model(flight1).WherePK().Delete()
+	panicIf(err)
+
+	// Count visible flights.
+	count, err := pgdb.Model((*Flight)(nil)).Count()
+	panicIf(err)
+	fmt.Println("count", count)
+
+	// Count soft deleted flights.
+	deletedCount, err := pgdb.Model((*Flight)(nil)).Deleted().Count()
+	panicIf(err)
+	fmt.Println("deleted count", deletedCount)
+
+	// Actually delete the flight.
+	_, err = pgdb.Model(flight1).WherePK().ForceDelete()
+	panicIf(err)
+
+	// Count soft deleted flights.
+	deletedCount, err = pgdb.Model((*Flight)(nil)).Deleted().Count()
+	panicIf(err)
+	fmt.Println("deleted count", deletedCount)
+
+	// Output: count 0
+	// deleted count 1
+	// deleted count 0
 }

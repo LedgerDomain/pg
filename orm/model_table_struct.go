@@ -38,12 +38,12 @@ func newStructTableModelValue(v reflect.Value) *structTableModel {
 	}
 }
 
-func (m *structTableModel) String() string {
-	return m.table.String()
-}
-
 func (*structTableModel) useQueryOne() bool {
 	return true
+}
+
+func (m *structTableModel) String() string {
+	return m.table.String()
 }
 
 func (m *structTableModel) IsNil() bool {
@@ -66,7 +66,7 @@ func (m *structTableModel) AppendParam(fmter QueryFormatter, b []byte, name stri
 
 	switch name {
 	case "TableName":
-		b = fmter.FormatQuery(b, string(m.table.FullName))
+		b = fmter.FormatQuery(b, string(m.table.SQLName))
 		return b, true
 	case "TableAlias":
 		b = append(b, m.table.Alias...)
@@ -166,19 +166,35 @@ func (m *structTableModel) AddColumnScanner(_ ColumnScanner) error {
 var _ BeforeScanHook = (*structTableModel)(nil)
 
 func (m *structTableModel) BeforeScan(ctx context.Context) error {
-	if m.table.hasFlag(beforeScanHookFlag) {
-		return callBeforeScanHook(ctx, m.strct.Addr())
+	if !m.table.hasFlag(beforeScanHookFlag) {
+		return nil
 	}
-	return nil
+	return callBeforeScanHook(ctx, m.strct.Addr())
 }
 
 var _ AfterScanHook = (*structTableModel)(nil)
 
 func (m *structTableModel) AfterScan(ctx context.Context) error {
-	if m.table.hasFlag(afterScanHookFlag) {
-		return callAfterScanHook(ctx, m.strct.Addr())
+	if !m.table.hasFlag(afterScanHookFlag) || !m.structInited {
+		return nil
 	}
-	return nil
+
+	var firstErr error
+
+	if err := callAfterScanHook(ctx, m.strct.Addr()); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	for _, j := range m.joins {
+		switch j.Rel.Type {
+		case HasOneRelation, BelongsToRelation:
+			if err := j.JoinModel.AfterScan(ctx); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	return firstErr
 }
 
 func (m *structTableModel) AfterSelect(ctx context.Context) error {
@@ -231,23 +247,24 @@ func (m *structTableModel) AfterDelete(ctx context.Context) error {
 }
 
 func (m *structTableModel) ScanColumn(
-	colIdx int, colName string, rd types.Reader, n int,
+	col types.ColumnInfo, rd types.Reader, n int,
 ) error {
-	ok, err := m.scanColumn(colIdx, colName, rd, n)
+	ok, err := m.scanColumn(col, rd, n)
 	if ok {
 		return err
 	}
-	if m.table.hasFlag(discardUnknownColumnsFlag) {
+	if m.table.hasFlag(discardUnknownColumnsFlag) || col.Name[0] == '_' {
 		return nil
 	}
-	return fmt.Errorf("pg: can't find column=%s in %s (try discard_unknown_columns)",
-		colName, m.table)
+	return fmt.Errorf(
+		"pg: can't find column=%s in %s "+
+			"(prefix the column with underscore or use discard_unknown_columns)",
+		col.Name, m.table,
+	)
 }
 
-func (m *structTableModel) scanColumn(
-	colIdx int, colName string, rd types.Reader, n int,
-) (bool, error) {
-	// Don't init nil struct when value is NULL.
+func (m *structTableModel) scanColumn(col types.ColumnInfo, rd types.Reader, n int) (bool, error) {
+	// Don't init nil struct if value is NULL.
 	if n == -1 &&
 		!m.structInited &&
 		m.strct.Kind() == reflect.Ptr &&
@@ -255,22 +272,25 @@ func (m *structTableModel) scanColumn(
 		return true, nil
 	}
 
-	err := m.initStruct()
-	if err != nil {
+	if err := m.initStruct(); err != nil {
 		return true, err
 	}
 
-	joinName, fieldName := splitColumn(colName)
+	joinName, fieldName := splitColumn(col.Name)
 	if joinName != "" {
 		if join := m.GetJoin(joinName); join != nil {
-			return join.JoinModel.scanColumn(colIdx, fieldName, rd, n)
+			joinCol := col
+			joinCol.Name = fieldName
+			return join.JoinModel.scanColumn(joinCol, rd, n)
 		}
 		if m.table.ModelName == joinName {
-			return m.scanColumn(colIdx, fieldName, rd, n)
+			joinCol := col
+			joinCol.Name = fieldName
+			return m.scanColumn(joinCol, rd, n)
 		}
 	}
 
-	field, ok := m.table.FieldsMap[colName]
+	field, ok := m.table.FieldsMap[col.Name]
 	if !ok {
 		return false, nil
 	}
@@ -320,6 +340,7 @@ func (m *structTableModel) join(
 			hasColumnName = true
 			break
 		}
+
 		currJoin.Rel = rel
 		index = append(index, rel.Field.Index...)
 
@@ -364,9 +385,9 @@ func (m *structTableModel) join(
 	return lastJoin
 }
 
-func (m *structTableModel) setSoftDeleteField() {
+func (m *structTableModel) setSoftDeleteField() error {
 	fv := m.table.SoftDeleteField.Value(m.strct)
-	m.table.SetSoftDeleteField(fv)
+	return m.table.SetSoftDeleteField(fv)
 }
 
 func splitColumn(s string) (string, string) {

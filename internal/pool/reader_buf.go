@@ -10,11 +10,7 @@ import (
 	"io"
 )
 
-const defaultBufSize = 65536
-
 type BufReader struct {
-	Columns [][]byte
-
 	rd io.Reader // reader provided by the client
 
 	buf       []byte
@@ -24,25 +20,24 @@ type BufReader struct {
 	err       error
 
 	available int         // bytes available for reading
-	bytesRd   BytesReader // reusable bytes reader
+	brd       BytesReader // reusable bytes reader
 }
 
-func NewBufReader(rd io.Reader) *BufReader {
+func NewBufReader(bufSize int) *BufReader {
 	return &BufReader{
-		rd:        rd,
-		buf:       make([]byte, defaultBufSize),
+		buf:       make([]byte, bufSize),
 		available: -1,
 	}
 }
 
 func (b *BufReader) BytesReader(n int) *BytesReader {
-	if b.Buffered() < n {
-		return nil
+	if n == -1 {
+		n = 0
 	}
 	buf := b.buf[b.r : b.r+n]
 	b.r += n
-	b.bytesRd.Reset(buf)
-	return &b.bytesRd
+	b.brd.Reset(buf)
+	return &b.brd
 }
 
 func (b *BufReader) SetAvailable(n int) {
@@ -67,11 +62,11 @@ func (b *BufReader) Reset(rd io.Reader) {
 
 // Buffered returns the number of bytes that can be read from the current buffer.
 func (b *BufReader) Buffered() int {
-	d := b.w - b.r
-	if b.available != -1 && d > b.available {
-		return b.available
+	buffered := b.w - b.r
+	if b.available == -1 || buffered <= b.available {
+		return buffered
 	}
-	return d
+	return b.available
 }
 
 func (b *BufReader) Bytes() []byte {

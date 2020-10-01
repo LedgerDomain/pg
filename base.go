@@ -5,12 +5,13 @@ import (
 	"io"
 	"time"
 
-	"go.opentelemetry.io/otel/api/kv"
 	"go.opentelemetry.io/otel/api/trace"
+	"go.opentelemetry.io/otel/label"
 
 	"github.com/go-pg/pg/v10/internal"
 	"github.com/go-pg/pg/v10/internal/pool"
 	"github.com/go-pg/pg/v10/orm"
+	"github.com/go-pg/pg/v10/types"
 )
 
 type baseDB struct {
@@ -87,10 +88,10 @@ func (db *baseDB) getConn(ctx context.Context) (*pool.Conn, error) {
 		return db.initConn(ctx, cn)
 	})
 	if err != nil {
-		db.pool.Remove(cn, err)
-		// It is safe to reset SingleConnPool if conn can't be initialized.
-		if p, ok := db.pool.(*pool.SingleConnPool); ok {
-			_ = p.Reset()
+		db.pool.Remove(ctx, cn, err)
+		// It is safe to reset StickyConnPool if conn can't be initialized.
+		if p, ok := db.pool.(*pool.StickyConnPool); ok {
+			_ = p.Reset(ctx)
 		}
 		if err := internal.Unwrap(err); err != nil {
 			return nil, err
@@ -120,19 +121,18 @@ func (db *baseDB) initConn(ctx context.Context, cn *pool.Conn) error {
 	}
 
 	if db.opt.OnConnect != nil {
-		p := pool.NewSingleConnPool(nil)
-		p.SetConn(cn)
+		p := pool.NewSingleConnPool(db.pool, cn)
 		return db.opt.OnConnect(ctx, newConn(ctx, db.withPool(p)))
 	}
 
 	return nil
 }
 
-func (db *baseDB) releaseConn(cn *pool.Conn, err error) {
+func (db *baseDB) releaseConn(ctx context.Context, cn *pool.Conn, err error) {
 	if isBadConn(err, false) {
-		db.pool.Remove(cn, err)
+		db.pool.Remove(ctx, cn, err)
 	} else {
-		db.pool.Put(cn)
+		db.pool.Put(ctx, cn)
 	}
 }
 
@@ -154,7 +154,7 @@ func (db *baseDB) withConn(
 				case <-ctx.Done():
 					err := db.cancelRequest(cn.ProcessID, cn.SecretKey)
 					if err != nil {
-						internal.Logger.Printf("cancelRequest failed: %s", err)
+						internal.Logger.Printf(ctx, "cancelRequest failed: %s", err)
 					}
 					// Signal end of conn use.
 					fnDone <- struct{}{}
@@ -169,7 +169,7 @@ func (db *baseDB) withConn(
 				case fnDone <- struct{}{}: // signal fn finish, skip cancel goroutine
 				}
 			}
-			db.releaseConn(cn, err)
+			db.releaseConn(ctx, cn, err)
 		}()
 
 		err = fn(ctx, cn)
@@ -243,7 +243,7 @@ func (db *baseDB) exec(ctx context.Context, query interface{}, params ...interfa
 
 		lastErr = internal.WithSpan(ctx, "exec", func(ctx context.Context, span trace.Span) error {
 			if attempt > 0 {
-				span.SetAttributes(kv.Int("retry", attempt))
+				span.SetAttributes(label.Int("retry", attempt))
 
 				if err := internal.Sleep(ctx, db.retryBackoff(attempt-1)); err != nil {
 					return err
@@ -321,7 +321,7 @@ func (db *baseDB) query(ctx context.Context, model, query interface{}, params ..
 
 		lastErr = internal.WithSpan(ctx, "query", func(ctx context.Context, span trace.Span) error {
 			if attempt > 0 {
-				span.SetAttributes(kv.Int("retry", attempt))
+				span.SetAttributes(label.Int("retry", attempt))
 
 				if err := internal.Sleep(ctx, db.retryBackoff(attempt-1)); err != nil {
 					return err
@@ -443,7 +443,7 @@ func (db *baseDB) copyFrom(
 		return nil, err
 	}
 
-	err = cn.WithReader(ctx, db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	err = cn.WithReader(ctx, db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		res, err = readReadyForQuery(rd)
 		return err
 	})
@@ -500,7 +500,7 @@ func (db *baseDB) copyTo(
 		return nil, err
 	}
 
-	err = cn.WithReader(ctx, db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	err = cn.WithReader(ctx, db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		err := readCopyOutResponse(rd)
 		if err != nil {
 			return err
@@ -561,7 +561,7 @@ func (db *baseDB) simpleQuery(
 	}
 
 	var res *result
-	if err := cn.WithReader(c, db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	if err := cn.WithReader(c, db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		var err error
 		res, err = readSimpleQuery(rd)
 		return err
@@ -580,7 +580,7 @@ func (db *baseDB) simpleQueryData(
 	}
 
 	var res *result
-	if err := cn.WithReader(c, db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	if err := cn.WithReader(c, db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		var err error
 		res, err = readSimpleQueryData(c, rd, model)
 		return err
@@ -595,12 +595,12 @@ func (db *baseDB) simpleQueryData(
 // executions. Multiple queries or executions may be run concurrently
 // from the returned statement.
 func (db *baseDB) Prepare(q string) (*Stmt, error) {
-	return prepareStmt(db.withPool(pool.NewSingleConnPool(db.pool)), q)
+	return prepareStmt(db.withPool(pool.NewStickyConnPool(db.pool)), q)
 }
 
 func (db *baseDB) prepare(
 	c context.Context, cn *pool.Conn, q string,
-) (string, [][]byte, error) {
+) (string, []types.ColumnInfo, error) {
 	name := cn.NextID()
 	err := cn.WithWriter(c, db.opt.WriteTimeout, func(wb *pool.WriteBuffer) error {
 		writeParseDescribeSyncMsg(wb, name, q)
@@ -610,8 +610,8 @@ func (db *baseDB) prepare(
 		return "", nil, err
 	}
 
-	var columns [][]byte
-	err = cn.WithReader(c, db.opt.ReadTimeout, func(rd *pool.BufReader) error {
+	var columns []types.ColumnInfo
+	err = cn.WithReader(c, db.opt.ReadTimeout, func(rd *pool.ReaderContext) error {
 		columns, err = readParseDescribeSync(rd)
 		return err
 	})

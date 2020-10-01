@@ -8,16 +8,15 @@ import (
 	"time"
 
 	"github.com/go-pg/pg/v10/internal"
-	"go.opentelemetry.io/otel/api/kv"
 	"go.opentelemetry.io/otel/api/trace"
+	"go.opentelemetry.io/otel/label"
 )
 
 var noDeadline = time.Time{}
 
 type Conn struct {
 	netConn net.Conn
-
-	rd *BufReader
+	rd      *ReaderContext
 
 	ProcessID int32
 	SecretKey int32
@@ -31,8 +30,6 @@ type Conn struct {
 
 func NewConn(netConn net.Conn) *Conn {
 	cn := &Conn{
-		rd: NewBufReader(netConn),
-
 		createdAt: time.Now(),
 	}
 	cn.SetNetConn(netConn)
@@ -55,7 +52,17 @@ func (cn *Conn) RemoteAddr() net.Addr {
 
 func (cn *Conn) SetNetConn(netConn net.Conn) {
 	cn.netConn = netConn
-	cn.rd.Reset(netConn)
+	if cn.rd != nil {
+		cn.rd.Reset(netConn)
+	}
+}
+
+func (cn *Conn) LockReader() {
+	if cn.rd != nil {
+		panic("not reached")
+	}
+	cn.rd = NewReaderContext()
+	cn.rd.Reset(cn.netConn)
 }
 
 func (cn *Conn) NetConn() net.Conn {
@@ -68,7 +75,7 @@ func (cn *Conn) NextID() string {
 }
 
 func (cn *Conn) WithReader(
-	ctx context.Context, timeout time.Duration, fn func(rd *BufReader) error,
+	ctx context.Context, timeout time.Duration, fn func(rd *ReaderContext) error,
 ) error {
 	return internal.WithSpan(ctx, "with_reader", func(ctx context.Context, span trace.Span) error {
 		if err := cn.netConn.SetReadDeadline(cn.deadline(ctx, timeout)); err != nil {
@@ -76,14 +83,22 @@ func (cn *Conn) WithReader(
 			return err
 		}
 
-		cn.rd.bytesRead = 0
+		rd := cn.rd
+		if rd == nil {
+			rd = GetReaderContext()
+			defer PutReaderContext(rd)
 
-		if err := fn(cn.rd); err != nil {
+			rd.Reset(cn.netConn)
+		}
+
+		rd.bytesRead = 0
+
+		if err := fn(rd); err != nil {
 			span.RecordError(ctx, err)
 			return err
 		}
 
-		span.SetAttributes(kv.Int64("net.read_bytes", cn.rd.bytesRead))
+		span.SetAttributes(label.Int64("net.read_bytes", rd.bytesRead))
 
 		return nil
 	})
@@ -122,7 +137,7 @@ func (cn *Conn) writeBuffer(
 		return err
 	}
 
-	span.SetAttributes(kv.Int("net.wrote_bytes", len(wb.Bytes)))
+	span.SetAttributes(label.Int("net.wrote_bytes", len(wb.Bytes)))
 
 	if _, err := cn.netConn.Write(wb.Bytes); err != nil {
 		span.RecordError(ctx, err)

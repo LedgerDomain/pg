@@ -19,7 +19,7 @@ var _ TableModel = (*manyModel)(nil)
 func newManyModel(j *join) *manyModel {
 	baseTable := j.BaseModel.Table()
 	joinModel := j.JoinModel.(*sliceTableModel)
-	dstValues := dstValues(joinModel, j.Rel.FKValues)
+	dstValues := dstValues(joinModel, j.Rel.BaseFKs)
 	if len(dstValues) == 0 {
 		return nil
 	}
@@ -47,20 +47,28 @@ func (m *manyModel) NextColumnScanner() ColumnScanner {
 }
 
 func (m *manyModel) AddColumnScanner(model ColumnScanner) error {
-	m.buf = modelID(m.buf[:0], m.strct, m.rel.FKs)
+	m.buf = modelID(m.buf[:0], m.strct, m.rel.JoinFKs)
 	dstValues, ok := m.dstValues[string(m.buf)]
 	if !ok {
 		return fmt.Errorf(
-			"pg: relation=%q has no base model=%q with id=%q (check join conditions)",
-			m.rel.Field.GoName, m.baseTable.TypeName, m.buf)
+			"pg: relation=%q does not have base %s with id=%q (check join conditions)",
+			m.rel.Field.GoName, m.baseTable, m.buf)
 	}
 
-	for _, v := range dstValues {
-		if m.sliceOfPtr {
-			v.Set(reflect.Append(v, m.strct.Addr()))
-		} else {
+	for i, v := range dstValues {
+		if !m.sliceOfPtr {
 			v.Set(reflect.Append(v, m.strct))
+			continue
 		}
+
+		if i == 0 {
+			v.Set(reflect.Append(v, m.strct.Addr()))
+			continue
+		}
+
+		clone := reflect.New(m.strct.Type()).Elem()
+		clone.Set(m.strct)
+		v.Set(reflect.Append(v, clone.Addr()))
 	}
 
 	return nil

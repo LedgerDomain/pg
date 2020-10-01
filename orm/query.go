@@ -92,21 +92,21 @@ func NewQuery(db DB, model ...interface{}) *Query {
 	return q.DB(db).Model(model...)
 }
 
-func NewQueryContext(c context.Context, db DB, model ...interface{}) *Query {
-	return NewQuery(db, model...).Context(c)
+func NewQueryContext(ctx context.Context, db DB, model ...interface{}) *Query {
+	return NewQuery(db, model...).Context(ctx)
 }
 
 // New returns new zero Query bound to the current db.
 func (q *Query) New() *Query {
-	cp := &Query{
+	clone := &Query{
 		ctx: q.ctx,
 		db:  q.db,
 
 		model:      q.model,
-		tableModel: q.tableModel,
+		tableModel: cloneTableModelJoins(q.tableModel),
 		flags:      q.flags,
 	}
-	return cp.withFlag(implicitModelFlag)
+	return clone.withFlag(implicitModelFlag)
 }
 
 // Clone clones the Query.
@@ -119,13 +119,13 @@ func (q *Query) Clone() *Query {
 		}
 	}
 
-	copy := &Query{
+	clone := &Query{
 		ctx:       q.ctx,
 		db:        q.db,
 		stickyErr: q.stickyErr,
 
 		model:      q.model,
-		tableModel: q.tableModel,
+		tableModel: cloneTableModelJoins(q.tableModel),
 		flags:      q.flags,
 
 		with:        q.with[:len(q.with):len(q.with)],
@@ -150,7 +150,27 @@ func (q *Query) Clone() *Query {
 		returning:  q.returning[:len(q.returning):len(q.returning)],
 	}
 
-	return copy
+	return clone
+}
+
+func cloneTableModelJoins(tm TableModel) TableModel {
+	switch tm := tm.(type) {
+	case *structTableModel:
+		if len(tm.joins) == 0 {
+			return tm
+		}
+		clone := *tm
+		clone.joins = clone.joins[:len(clone.joins):len(clone.joins)]
+		return &clone
+	case *sliceTableModel:
+		if len(tm.joins) == 0 {
+			return tm
+		}
+		clone := *tm
+		clone.joins = clone.joins[:len(clone.joins):len(clone.joins)]
+		return &clone
+	}
+	return tm
 }
 
 func (q *Query) err(err error) *Query {
@@ -589,30 +609,6 @@ func (q *Query) WherePK() *Query {
 	}
 
 	panic("not reached")
-}
-
-// WhereStruct is deprecated and will not receive updates.
-//
-// WhereStruct generates conditions for the struct fields with non-zero values:
-//    - Foo int - Where("foo = ?", strct.Foo)
-//    - Foo []int - Where("foo = ANY(?)", pg.Array(strct.Foo))
-//    - FooNEQ int - Where("foo != ?", strct.Foo)
-//    - FooExclude int - Where("foo != ?", strct.Foo)
-//    - FooGT int - Where("foo > ?", strct.Foo)
-//    - FooGTE int - Where("foo >= ?", strct.Foo)
-//    - FooLT int - Where("foo < ?", strct.Foo)
-//    - FooLTE int - Where("foo <= ?", strct.Foo)
-//
-// urlstruct.Decode can be used to decode url.Values into the struct.
-//
-// Following field tags are recognized:
-//    - pg:"-" - field is ignored.
-//    - pg:",nowhere" - field is decoded but is ignored by WhereStruct.
-//    - pg:",nodecode" - field is not decoded but is used by WhereStruct.
-//    - pg:",required" - condition is added for zero values as well.
-func (q *Query) WhereStruct(strct interface{}) *Query {
-	q.where = append(q.where, newStructFilter(strct))
-	return q
 }
 
 func (q *Query) Join(join string, params ...interface{}) *Query {
@@ -1191,7 +1187,9 @@ func (q *Query) Delete(values ...interface{}) (Result, error) {
 			clone = clone.Set("? = ?", table.SoftDeleteField.Column, time.Now())
 		}
 	} else {
-		clone.tableModel.setSoftDeleteField()
+		if err := clone.tableModel.setSoftDeleteField(); err != nil {
+			return nil, err
+		}
 		clone = clone.Column(table.SoftDeleteField.SQLName)
 	}
 	return clone.Update(values...)
@@ -1212,23 +1210,22 @@ func (q *Query) ForceDelete(values ...interface{}) (Result, error) {
 		return nil, err
 	}
 
-	c := q.ctx
+	ctx := q.ctx
 
 	if q.tableModel != nil {
-		c, err = q.tableModel.BeforeDelete(c)
+		ctx, err = q.tableModel.BeforeDelete(ctx)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	res, err := q.returningQuery(c, model, NewDeleteQuery(q))
+	res, err := q.returningQuery(ctx, model, NewDeleteQuery(q))
 	if err != nil {
 		return nil, err
 	}
 
 	if q.tableModel != nil {
-		err = q.tableModel.AfterDelete(c)
-		if err != nil {
+		if err := q.tableModel.AfterDelete(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -1320,7 +1317,7 @@ func (q *Query) hasExplicitTableModel() bool {
 }
 
 func (q *Query) modelHasTableName() bool {
-	return q.hasExplicitTableModel() && q.tableModel.Table().FullName != ""
+	return q.hasExplicitTableModel() && q.tableModel.Table().SQLName != ""
 }
 
 func (q *Query) modelHasTableAlias() bool {
@@ -1333,7 +1330,7 @@ func (q *Query) hasTables() bool {
 
 func (q *Query) appendFirstTable(fmter QueryFormatter, b []byte) ([]byte, error) {
 	if q.modelHasTableName() {
-		return fmter.FormatQuery(b, string(q.tableModel.Table().FullName)), nil
+		return fmter.FormatQuery(b, string(q.tableModel.Table().SQLName)), nil
 	}
 	if len(q.tables) > 0 {
 		return q.tables[0].AppendQuery(fmter, b)
@@ -1344,8 +1341,8 @@ func (q *Query) appendFirstTable(fmter QueryFormatter, b []byte) ([]byte, error)
 func (q *Query) appendFirstTableWithAlias(fmter QueryFormatter, b []byte) (_ []byte, err error) {
 	if q.modelHasTableName() {
 		table := q.tableModel.Table()
-		b = fmter.FormatQuery(b, string(table.FullName))
-		if table.Alias != table.FullName {
+		b = fmter.FormatQuery(b, string(table.SQLName))
+		if table.Alias != table.SQLName {
 			b = append(b, " AS "...)
 			b = append(b, table.Alias...)
 		}
@@ -1359,7 +1356,7 @@ func (q *Query) appendFirstTableWithAlias(fmter QueryFormatter, b []byte) (_ []b
 		}
 		if q.modelHasTableAlias() {
 			table := q.tableModel.Table()
-			if table.Alias != table.FullName {
+			if table.Alias != table.SQLName {
 				b = append(b, " AS "...)
 				b = append(b, table.Alias...)
 			}
