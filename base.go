@@ -2,6 +2,7 @@ package pg
 
 import (
 	"context"
+    "fmt"
 	"io"
 	"time"
 
@@ -178,6 +179,7 @@ func (db *baseDB) withConn(
 }
 
 func (db *baseDB) shouldRetry(err error) bool {
+    fmt.Printf("DEBUG: in shouldRetry")
 	switch err {
 	case io.EOF, io.ErrUnexpectedEOF:
 		return true
@@ -185,6 +187,7 @@ func (db *baseDB) shouldRetry(err error) bool {
 		return false
 	}
 
+    fmt.Printf("DEBUG: checking pg error")
 	if pgerr, ok := err.(Error); ok {
 		switch pgerr.Field('C') {
 		case "40001", // serialization_failure
@@ -198,10 +201,13 @@ func (db *baseDB) shouldRetry(err error) bool {
 		}
 	}
 
+    fmt.Printf("DEBUG: checking timeout error")
 	if _, ok := err.(timeoutError); ok {
+        fmt.Printf("DEBUG: YES timeout error")
 		return true
 	}
 
+    fmt.Printf("DEBUG: NOT a timeout error, returning false")
 	return false
 }
 
